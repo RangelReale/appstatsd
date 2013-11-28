@@ -68,20 +68,20 @@ func dbHandleMetrics(m *statsd.Metric) {
 	case statsd.COUNTER:
 		idata = &bson.M{
 			"$inc": bson.M{
-				fmt.Sprintf("dy.c_%s", name):                                 m.Value,
-				fmt.Sprintf("hr.h_%d.c_%s", tm.Hour(), name):                 m.Value,
-				fmt.Sprintf("hr.h_%d.mn.m_%d.c_%s", tm.Hour(), minute, name): m.Value,
+				fmt.Sprintf("_dy.c_%s", name):                                 m.Value,
+				fmt.Sprintf("_hr.h_%d.c_%s", tm.Hour(), name):                 m.Value,
+				fmt.Sprintf("_hr.h_%d.mn.m_%d.c_%s", tm.Hour(), minute, name): m.Value,
 			},
 		}
 	case statsd.TIMER:
 		idata = &bson.M{
 			"$inc": bson.M{
-				fmt.Sprintf("dy.t_%s", name):                                  m.Value,
-				fmt.Sprintf("dy.tc_%s", name):                                 1,
-				fmt.Sprintf("hr.h_%d.t_%s", tm.Hour(), name):                  m.Value,
-				fmt.Sprintf("hr.h_%d.tc_%s", tm.Hour(), name):                 1,
-				fmt.Sprintf("hr.h_%d.mn.m_%d.t_%s", tm.Hour(), minute, name):  m.Value,
-				fmt.Sprintf("hr.h_%d.mn.m_%d.tc_%s", tm.Hour(), minute, name): 1,
+				fmt.Sprintf("_dy.t_%s", name):                                  m.Value,
+				fmt.Sprintf("_dy.tc_%s", name):                                 1,
+				fmt.Sprintf("_hr.h_%d.t_%s", tm.Hour(), name):                  m.Value,
+				fmt.Sprintf("_hr.h_%d.tc_%s", tm.Hour(), name):                 1,
+				fmt.Sprintf("_hr.h_%d.mn.m_%d.t_%s", tm.Hour(), minute, name):  m.Value,
+				fmt.Sprintf("_hr.h_%d.mn.m_%d.tc_%s", tm.Hour(), minute, name): 1,
 			},
 		}
 	case statsd.GAUGE:
@@ -89,16 +89,20 @@ func dbHandleMetrics(m *statsd.Metric) {
 
 	if idata != nil {
 		baseq := bson.M{
-			"dt": tm.Format("2006-01-02"),
+			"_dt": tm.Format("2006-01-02"),
 		}
 		baseqapp := bson.M{
-			"dt":  tm.Format("2006-01-02"),
-			"app": app,
+			"_dt":  tm.Format("2006-01-02"),
+			"_app": app,
 		}
 
 		c_base := "_a"
 		for _, iv := range values {
 			info := strings.Split(iv, "#")
+			if strings.HasPrefix(info[0], "_") {
+				log.Error("Invalid bucket name: %s", m.Bucket)
+				return
+			}
 
 			c_base = c_base + "_" + info[0]
 
@@ -117,6 +121,11 @@ func dbHandleMetrics(m *statsd.Metric) {
 						pname = fmt.Sprintf("%s%d", info[0], ridx)
 					} else {
 						pname = info[0]
+					}
+
+					if strings.HasPrefix(pname, "_") {
+						log.Error("Invalid bucket name: %s", m.Bucket)
+						return
 					}
 
 					baseq[pname] = rv
@@ -167,4 +176,15 @@ func dbConnect() error {
 		dbsession = nil
 	}
 	return err
+}
+
+func DBConnectClone() (*mgo.Session, error) {
+	if dbsession == nil {
+		err := dbConnect()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return dbsession.Clone(), nil
 }

@@ -24,8 +24,9 @@ func main() {
 
 	go ServerDatabase()
 
-	go ServerStatsd()
 	go ServerLog()
+	go ServerStatsd()
+	go ServerInfo()
 
 	select {}
 }
