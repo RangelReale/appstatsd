@@ -22,6 +22,8 @@ func main() {
 		}
 	}
 
+	go ServerDatabase()
+
 	go ServerStatsd()
 	go ServerLog()
 

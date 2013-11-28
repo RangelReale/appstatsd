@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/RangelReale/gostatsd/statsd"
 	"io"
 	"net"
 	"strconv"
+	"time"
 )
 
 type LogLevel int
@@ -20,10 +22,11 @@ const (
 )
 
 type LogData struct {
-	Level     LogLevel
-	App       string
-	MessageId string
-	Message   string
+	Date      time.Time `bson:"dt"`
+	Level     LogLevel  `bson:"lv"`
+	App       string    `bson:"app,omitempty"`
+	MessageId string    `bson:"mid,omitempty"`
+	Message   string    `bson:"m"`
 }
 
 func ServerLog() {
@@ -71,8 +74,15 @@ func serverLogHandleMessage(addr net.Addr, msg []byte) {
 				log.Error("error parsing line %q from %s: %s", line, addr, err)
 				continue
 			}
-			//go srv.Handler.HandleMetric(metric)
-			log.Debug("LOG: %+v", data)
+			DatabaseChan <- DBMessage{log: data}
+			// log errors in "error"
+			if data.Level < WARNING {
+				DatabaseChan <- DBMessage{metrics: &statsd.Metric{
+					Type:   statsd.COUNTER,
+					Bucket: fmt.Sprintf("%s.error.ct", data.App),
+					Value:  1,
+				}}
+			}
 		}
 
 		if readerr != nil && readerr == io.EOF {
@@ -84,7 +94,7 @@ func serverLogHandleMessage(addr net.Addr, msg []byte) {
 
 // APP:LEVEL:MESSAGEID:MESSAGE
 func serverLogParseLine(line []byte) (*LogData, error) {
-	data := &LogData{}
+	data := &LogData{Date: time.Now()}
 
 	buf := bytes.NewBuffer(line)
 
