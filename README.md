@@ -26,7 +26,7 @@ where:
 
 The real saved named is prefixed with the bucket type, c_ for COUNTER, t_ for TIMER, g_ for GAUGE. this must be taken in account when retrieving data.
 
-For the TIMER and GAUGE parameter, an additional counter value is saved for each value, if the tc_ and gc_ prefix respectively.
+For the TIMER and GAUGE parameter, an additional counter value is saved for each value, with the tc_ and gc_ prefix respectively.
 
 How it works - logging
 ----------------------
