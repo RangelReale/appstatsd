@@ -18,39 +18,61 @@ import (
 	"strings"
 )
 
+// Response header
 type InfoResponse struct {
-	ErrorCode    int32       `json:"error_code"`
-	ErrorMessage string      `json:"error_message,omitempty"`
-	Data         interface{} `json:"data"`
+	ErrorCode    int32  `json:"error_code"`
+	ErrorMessage string `json:"error_message,omitempty"`
+
+	// Must always be a struct or map, CANNOT be array
+	Data interface{} `json:"data"`
 }
 
 type InfoResult struct {
-	List     []map[string]interface{} `json:"list"`
-	plotItem string                   `json:"-"`
+	List []map[string]interface{} `json:"list"`
+
+	// internal variable for chart generation
+	plotItem string `json:"-"`
+}
+
+type InfoResultRaw struct {
+	List interface{} `json:"list"`
+
+	// internal variable for chart generation
+	plotItem string `json:"-"`
 }
 
 func ServerInfo() {
 	r := mux.NewRouter()
+
+	r.HandleFunc("/log", func(w http.ResponseWriter, r *http.Request) {
+		if err := handleLog(w, r); err != nil {
+			handleError(err, w, r)
+		}
+	})
+
 	r.HandleFunc("/stats/{process}", func(w http.ResponseWriter, r *http.Request) {
 		if err := handleStats(w, r); err != nil {
-			log.Error("Error: %s", err)
-
-			stenc, eerr := json.Marshal(InfoResponse{ErrorCode: 1, ErrorMessage: err.Error()})
-			if eerr != nil {
-				w.Write([]byte(fmt.Sprintf("Error: %s", err)))
-				return
-			}
-
-			w.Header().Add("Content-Type", "application/json; charset=utf-8")
-			w.Write(stenc)
-
+			handleError(err, w, r)
 		}
 	})
 	r.NotFoundHandler = http.HandlerFunc(handleNotFound)
 
 	http.Handle("/", r)
 
-	http.ListenAndServe(fmt.Sprintf(":%d", Configuration.InfoPort), nil)
+	http.ListenAndServe(fmt.Sprintf("%s:%d", Configuration.ListenHost, Configuration.InfoPort), nil)
+}
+
+func handleError(err error, w http.ResponseWriter, r *http.Request) {
+	log.Error("Info error: %s", err)
+
+	stenc, eerr := json.Marshal(InfoResponse{ErrorCode: 1, ErrorMessage: err.Error()})
+	if eerr != nil {
+		w.Write([]byte(fmt.Sprintf("Error: %s", err)))
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/json; charset=utf-8")
+	w.Write(stenc)
 }
 
 func handleNotFound(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +80,62 @@ func handleNotFound(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(404)
 	w.Write([]byte("Not found"))
+}
+
+func handleLog(w http.ResponseWriter, r *http.Request) error {
+	session, err := DBConnectClone()
+	if err != nil {
+		return errors.New(fmt.Sprintf("Error reading data: %s", err))
+	}
+	defer session.Close()
+
+	db := session.DB(Configuration.MGODBName)
+
+	// amount of records
+	amount := 100
+	if r.Form.Get("amount") != "" {
+		pamount, err := strconv.ParseInt(r.Form.Get("amount"), 10, 16)
+		if err == nil {
+			amount = int(pamount)
+		}
+	}
+	if amount < 0 {
+		amount = 100
+	}
+
+	// log
+	c_log := db.C("log")
+	c_log.EnsureIndex(mgo.Index{
+		Key:        []string{"-dt"},
+		Background: true,
+		Sparse:     true,
+	})
+
+	fdata := make([]*LogData, 0, 100)
+
+	query := c_log.Find(nil).Sort("-tm").Limit(amount).Iter()
+	flog := &LogData{}
+
+	for query.Next(&flog) {
+		fdata = append(fdata, flog)
+	}
+
+	if err := query.Close(); err != nil {
+		return errors.New(fmt.Sprintf("Error reading data: %s", err))
+	}
+
+	res := InfoResultRaw{List: fdata}
+
+	// output json data
+	stenc, err := json.Marshal(InfoResponse{ErrorCode: 0, Data: res})
+	if err != nil {
+		return errors.New(fmt.Sprintf("Error encoding json data: %s", err))
+	}
+
+	w.Header().Add("Content-Type", "application/json; charset=utf-8")
+	w.Write(stenc)
+
+	return nil
 }
 
 func handleStats(w http.ResponseWriter, r *http.Request) error {
@@ -79,7 +157,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 	output := r.Form.Get("output") // json, chart
 	//fillempty := r.Form.Get("fillempty") // 1, 0
 
-	//app := r.Form.Get("app")
+	app := r.Form.Get("app")
 	pdata := r.Form.Get("data")
 	if pdata == "" {
 		return errors.New("Data parameter is required")
@@ -87,6 +165,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 
 	data := strings.Split(pdata, ",")
 
+	// amount of days
 	amount := 2
 	if r.Form.Get("amount") != "" {
 		pamount, err := strconv.ParseInt(r.Form.Get("amount"), 10, 16)
@@ -96,28 +175,45 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	cname := fmt.Sprintf("_a_%s", process)
+	if app != "" {
+		cname += "_app"
+	}
 
 	if !infoCollectionExists(db, cname) {
 		return errors.New("Process not found")
 	}
 
 	c := db.C(cname)
-	c.EnsureIndex(mgo.Index{
-		Key:        []string{"_dt"},
-		Background: true,
-		Sparse:     true,
-	})
+	if app != "" {
+		c.EnsureIndex(mgo.Index{
+			Key:        []string{"_dt", "_app"},
+			Background: true,
+			Sparse:     true,
+		})
+	} else {
+		c.EnsureIndex(mgo.Index{
+			Key:        []string{"_dt"},
+			Background: true,
+			Sparse:     true,
+		})
+	}
 
 	// start time
 	curdate := epochdate.TodayUTC() - epochdate.Date(amount) + 1
 	startdate := curdate
 
+	// build mongodb filter
 	filter := bson.M{"_dt": bson.M{"$gte": startdate.String()}}
+	if app != "" {
+		filter["_app"] = app
+	}
+
 	for pn, _ := range r.Form {
+		// each parameter prefixed with f_ becomes a query parameter
 		if strings.HasPrefix(pn, "f_") {
 			pname := strings.TrimPrefix(pn, "f_")
 			if strings.HasPrefix(pname, "_") {
-				return errors.New(fmt.Sprintf("Error filter param: %s", pname))
+				return errors.New(fmt.Sprintf("Invalid filter param - cannot start with underline: %s", pname))
 			}
 
 			filter[pname] = r.Form.Get(pn)
@@ -126,20 +222,23 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 
 	query := c.Find(filter).Sort("_dt").Limit(amount).Iter()
 
+	// stats collector, fills empty periods with 0
 	scollect := NewSDayCollect(period)
 	for _, ditem := range data {
+		// add data - output name is equals data name
 		scollect.AddImport(ditem, ditem)
 	}
 
 	fdata := make(map[string]interface{})
 	for query.Next(&fdata) {
-		//log.Debug("%+v", fdata)
-
 		datadate, _ := epochdate.Parse(epochdate.RFC3339, fdata["_dt"].(string))
 		for curdate.Before(datadate) {
+			// fill empty days
 			scollect.EmptyDay(curdate.String())
 			curdate += 1
 		}
+
+		// fill day from data
 		scollect.ValueDay(curdate.String(), fdata)
 
 		curdate += 1
@@ -149,6 +248,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 		return errors.New(fmt.Sprintf("Error reading data: %s", err))
 	}
 
+	// fill until today
 	for curdate.Before(epochdate.TodayUTC()) {
 		scollect.EmptyDay(curdate.String())
 		curdate += 1
@@ -157,6 +257,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 	res := InfoResult{List: scollect.Result}
 
 	if output != "chart" {
+		// output json data
 		stenc, err := json.Marshal(InfoResponse{ErrorCode: 0, Data: res})
 		if err != nil {
 			return errors.New(fmt.Sprintf("Error encoding json data: %s", err))
@@ -165,7 +266,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 		w.Header().Add("Content-Type", "application/json; charset=utf-8")
 		w.Write(stenc)
 	} else {
-
+		// output chart
 		p, err := plot.New()
 		if err != nil {
 			return err
@@ -185,8 +286,8 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 
 		w.Header().Add("Content-Type", "image/png")
 
-		width := vg.Length(640)
-		height := vg.Length(480)
+		width := vg.Length(800)
+		height := vg.Length(600)
 		c := vgimg.PngCanvas{vgimg.New(width, height)}
 		p.Draw(plot.MakeDrawArea(c))
 		c.WriteTo(w)
@@ -195,6 +296,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// Checks if a collection exists on the MongoDB database
 func infoCollectionExists(db *mgo.Database, name string) bool {
 	list, err := db.CollectionNames()
 	if err != nil {
@@ -211,6 +313,7 @@ func infoCollectionExists(db *mgo.Database, name string) bool {
 	return false
 }
 
+// Sets item to be used on plotter.XYer interface
 func (s *InfoResult) SetPlotItem(item string) {
 	s.plotItem = item
 }
@@ -220,6 +323,7 @@ func (s InfoResult) Len() int {
 	return len(s.List)
 }
 
+// must convert values to float64
 func (s InfoResult) fieldValue(index int, fieldname string) float64 {
 	r := s.List[index][fieldname]
 
@@ -254,6 +358,7 @@ func (s InfoResult) XY(index int) (x, y float64) {
 	return float64(index), v
 }
 
+// Return X axis tick marks
 func (s InfoResult) Ticks() []plot.Tick {
 	ret := make([]plot.Tick, len(s.List))
 	for x, i := range s.List {
@@ -262,6 +367,7 @@ func (s InfoResult) Ticks() []plot.Tick {
 	return ret
 }
 
+// Add colored line to chart
 func InfoAddLinePoints(plt *plot.Plot, color int, vs ...interface{}) error {
 	var ps []plot.Plotter
 	names := make(map[[2]plot.Thumbnailer]string)

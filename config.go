@@ -11,10 +11,11 @@ func init() {
 }
 
 type Config struct {
-	StatsdPort    int32
-	LogPort       int32
-	InfoPort      int32
-	FlushInterval int32
+	StatsdPort      int32
+	LogPort         int32
+	InfoPort        int32
+	ListenHost      string
+	ErrorStatistics bool
 
 	MGOHost     string
 	MGOPort     string
@@ -25,15 +26,15 @@ type Config struct {
 
 func NewConfig() *Config {
 	c := Config{
-		StatsdPort:    8125,
-		LogPort:       8126,
-		InfoPort:      8127,
-		FlushInterval: 10,
-		MGOHost:       "localhost",
-		MGOPort:       "27017",
-		MGOUsername:   "",
-		MGOPassword:   "",
-		MGODBName:     "appstatsd",
+		StatsdPort:      8125,
+		LogPort:         8126,
+		InfoPort:        8127,
+		ErrorStatistics: true,
+		MGOHost:         "localhost",
+		MGOPort:         "27017",
+		MGOUsername:     "",
+		MGOPassword:     "",
+		MGODBName:       "appstatsd",
 	}
 	return &c
 }

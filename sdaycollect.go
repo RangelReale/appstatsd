@@ -7,9 +7,10 @@ import (
 	"time"
 )
 
+// Fills empty periods with zeroes
 type SDayCollect struct {
-	Data   string
-	Result []map[string]interface{}
+	Data   string                   // day, hour, minute
+	Result []map[string]interface{} // Collected result
 	Import map[string]string
 }
 
@@ -21,15 +22,20 @@ func NewSDayCollect(data string) *SDayCollect {
 	}
 }
 
+// Add a field to import, with possibly alternate output name
 func (s *SDayCollect) AddImport(value string, name string) {
 	s.Import[value] = name
 
 	if strings.HasPrefix(value, "t_") {
 		n := "tc_" + strings.TrimPrefix(value, "t_")
 		s.Import[n] = n
+	} else if strings.HasPrefix(value, "g_") {
+		n := "gc_" + strings.TrimPrefix(value, "g_")
+		s.Import[n] = n
 	}
 }
 
+// Write imported data, using zeroes if not found
 func (s *SDayCollect) setImport(dest map[string]interface{}, values map[string]interface{}) {
 	for iiv, iin := range s.Import {
 		if values != nil {
@@ -44,6 +50,7 @@ func (s *SDayCollect) setImport(dest map[string]interface{}, values map[string]i
 	}
 }
 
+// Fills data with zeroes for empty day
 func (s *SDayCollect) EmptyDay(date string) {
 	cdt, _ := epochdate.Parse(epochdate.RFC3339, date)
 	switch s.Data {
@@ -60,6 +67,7 @@ func (s *SDayCollect) EmptyDay(date string) {
 		}
 	case "minute":
 		for di := 0; di < 24; di++ {
+			// minutes in 15 minutes increments
 			for mi := 0; mi < 4; mi++ {
 				if cdt.UTCTime(di, mi*15, 0, 0).After(time.Now().UTC()) {
 					return
@@ -80,6 +88,7 @@ func (s *SDayCollect) EmptyDay(date string) {
 	}
 }
 
+// Sets values for a day. Empty periods are zeroed
 func (s *SDayCollect) ValueDay(date string, value map[string]interface{}) {
 	cdt, _ := epochdate.Parse(epochdate.RFC3339, date)
 
@@ -113,6 +122,7 @@ func (s *SDayCollect) ValueDay(date string, value map[string]interface{}) {
 					mvalue = mintf.(map[string]interface{})
 				}
 			}
+			// minutes in 15 minutes increments
 			for mi := 0; mi < 4; mi++ {
 				if cdt.UTCTime(di, mi*15, 0, 0).After(time.Now().UTC()) {
 					return

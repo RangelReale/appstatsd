@@ -22,15 +22,16 @@ const (
 )
 
 type LogData struct {
-	Date      time.Time `bson:"dt"`
-	Level     LogLevel  `bson:"lv"`
-	App       string    `bson:"app,omitempty"`
-	MessageId string    `bson:"mid,omitempty"`
-	Message   string    `bson:"m"`
+	Date      time.Time `json:"date" bson:"dt"`
+	Level     LogLevel  `json:"level" bson:"lv"`
+	App       string    `json:"app" bson:"app,omitempty"`
+	MessageId string    `json:"mid,omitempty" bson:"mid,omitempty"`
+	Message   string    `json:"msg" bson:"m"`
 }
 
+// Receive log messages via udp
 func ServerLog() {
-	c, err := net.ListenPacket("udp", fmt.Sprintf(":%d", Configuration.LogPort))
+	c, err := net.ListenPacket("udp", fmt.Sprintf("%s:%d", Configuration.ListenHost, Configuration.LogPort))
 	if err != nil {
 		log.Fatal("Error creating log server: %s", err.Error())
 	}
@@ -56,7 +57,7 @@ func serverLogHandleMessage(addr net.Addr, msg []byte) {
 	for {
 		line, readerr := buf.ReadBytes('\n')
 
-		// protocol does not require line to end in \n, if EOF use received line if valid
+		// don't require line to end in \n, if EOF use received line if valid
 		if readerr != nil && readerr != io.EOF {
 			log.Error("error reading message from %s: %s", addr, readerr)
 			return
@@ -74,14 +75,25 @@ func serverLogHandleMessage(addr net.Addr, msg []byte) {
 				log.Error("error parsing line %q from %s: %s", line, addr, err)
 				continue
 			}
+
+			// send message to database
 			DatabaseChan <- DBMessage{log: data}
-			// log errors in "error"
-			if data.Level < WARNING {
-				DatabaseChan <- DBMessage{metrics: &statsd.Metric{
-					Type:   statsd.COUNTER,
-					Bucket: fmt.Sprintf("%s.error.ct", data.App),
-					Value:  1,
-				}}
+
+			if Configuration.ErrorStatistics {
+				// log errors in "error"
+				if data.Level < WARNING {
+					DatabaseChan <- DBMessage{metrics: &statsd.Metric{
+						Type:   statsd.COUNTER,
+						Bucket: fmt.Sprintf("%s.error.ct", data.App),
+						Value:  1,
+					}}
+				} else if data.Level == WARNING {
+					DatabaseChan <- DBMessage{metrics: &statsd.Metric{
+						Type:   statsd.COUNTER,
+						Bucket: fmt.Sprintf("%s.error.wct", data.App),
+						Value:  1,
+					}}
+				}
 			}
 		}
 
