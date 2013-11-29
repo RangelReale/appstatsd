@@ -63,8 +63,9 @@ Log messages can be retrieved acessing:
 	
 in this format:
 
-	{"date":"2013-11-28T15:45:07.208-02:00","level":2,"app":"apdc-test","msg":"An errror"}
-
+````json
+{"date":"2013-11-28T15:45:07.208-02:00","level":2,"app":"apdc-test","msg":"An errror"}
+````
 
 Statistics can be retrieved acessing:
 
@@ -80,7 +81,9 @@ where:
 
 json data is output in this format:
 
-	{"date":"2013-11-28","hour":0,"minute":0,"t_dr":0,"tc_dr":0,"c_ct":20,}
+````json
+{"date":"2013-11-28","hour":0,"minute":0,"t_dr":0,"tc_dr":0,"c_ct":20,}
+````
 
 The hour and minute fields depends on the period parameter.
 
@@ -88,6 +91,25 @@ Configuration file
 ------------------
 
 The configuration file uses the [toml] format. See the appstatsd-default.conf files for an example.
+
+
+Clients
+-------
+
+Any statsd client should be able to send statistics. By default the application uses the default statsd port (8125).
+
+
+* Go: https://github.com/RangelReale/appstatsd-client
+
+
+Dependencies
+------------
+
+	* gostatsd: https://github.com/kisielk/gostatsd
+	* mgo: http://labix.org/mgo
+	* gorilla/mux: http://github.com/gorilla/mux
+	* plotinum: https://code.google.com/p/plotinum
+	* epochdate: http://github.com/RangelReale/epochdate
 
 
 Author
