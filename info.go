@@ -130,7 +130,7 @@ func handleLog(w http.ResponseWriter, r *http.Request) error {
 
 	fdata := make([]*LogData, 0, 100)
 
-	query := c_log.Find(nil).Sort("-tm").Limit(amount).Iter()
+	query := c_log.Find(nil).Sort("-dt").Limit(amount).Iter()
 	flog := &LogData{}
 
 	for query.Next(&flog) {
