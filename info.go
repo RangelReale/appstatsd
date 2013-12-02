@@ -27,6 +27,17 @@ type InfoResponse struct {
 	Data interface{} `json:"data"`
 }
 
+type InfoResultGroup struct {
+	Group []*InfoResultGroupItem `json:"group"`
+}
+
+type InfoResultGroupItem struct {
+	*InfoResult
+	GroupId string                 `json:"-"`
+	Groups  map[string]interface{} `json:"groups"`
+	//Item   *InfoResult            `json:"item"`
+}
+
 type InfoResult struct {
 	List []map[string]interface{} `json:"list"`
 
@@ -39,6 +50,12 @@ type InfoResultRaw struct {
 
 	// internal variable for chart generation
 	plotItem string `json:"-"`
+}
+
+type InfoGroupInfo struct {
+	GroupId string
+	Groups  map[string]interface{}
+	Collect *SDayCollect
 }
 
 func ServerInfo() {
@@ -158,11 +175,15 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 	//fillempty := r.Form.Get("fillempty") // 1, 0
 
 	app := r.Form.Get("app")
+	pgroup := r.Form.Get("group")
+	group := []string{}
+	if pgroup != "" {
+		group = strings.Split(pgroup, ",")
+	}
 	pdata := r.Form.Get("data")
 	if pdata == "" {
 		return errors.New("Data parameter is required")
 	}
-
 	data := strings.Split(pdata, ",")
 
 	// amount of days
@@ -220,26 +241,80 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	query := c.Find(filter).Sort("_dt").Limit(amount).Iter()
-
-	// stats collector, fills empty periods with 0
-	scollect := NewSDayCollect(period)
-	for _, ditem := range data {
-		// add data - output name is equals data name
-		scollect.AddImport(ditem, ditem)
+	querysort := []string{"_dt"}
+	if len(group) > 0 {
+		for _, g := range group {
+			querysort = append(querysort, g)
+		}
 	}
+
+	query := c.Find(filter).Sort(querysort...).Iter()
+
+	groupcollect := make(map[string]*InfoGroupInfo, 0)
+	lastgroup := ""
 
 	fdata := make(map[string]interface{})
 	for query.Next(&fdata) {
+		// build group string
+		curgroup := ""
+		if len(group) > 0 {
+			for _, g := range group {
+				if gv, ok := fdata[g]; ok {
+					curgroup = curgroup + "::" + fmt.Sprintf("%v", gv)
+				} else {
+					return errors.New(fmt.Sprintf("No such field %s", g))
+				}
+			}
+		}
+
+		// reset dates if changed group
+		if curgroup != lastgroup {
+			if lastgroup != "" {
+				ginfo, _ := groupcollect[lastgroup]
+
+				// fill until today
+				for curdate.Before(epochdate.TodayUTC()) {
+					ginfo.Collect.EmptyDay(curdate.String())
+					curdate += 1
+				}
+			}
+
+			// start time
+			curdate = epochdate.TodayUTC() - epochdate.Date(amount) + 1
+			startdate = curdate
+
+			lastgroup = curgroup
+		}
+
+		ginfo, sdok := groupcollect[curgroup]
+		if !sdok {
+			// stats collector, fills empty periods with 0
+			scollect := NewSDayCollect(period)
+			for _, ditem := range data {
+				// add data - output name is equals data name
+				scollect.AddImport(ditem, ditem)
+			}
+			ginfo = &InfoGroupInfo{GroupId: curgroup, Groups: make(map[string]interface{}), Collect: scollect}
+			groupcollect[curgroup] = ginfo
+
+			for _, g := range group {
+				if gv, ok := fdata[g]; ok {
+					ginfo.Groups[g] = gv
+				} else {
+					return errors.New(fmt.Sprintf("No such field %s", g))
+				}
+			}
+		}
+
 		datadate, _ := epochdate.Parse(epochdate.RFC3339, fdata["_dt"].(string))
 		for curdate.Before(datadate) {
 			// fill empty days
-			scollect.EmptyDay(curdate.String())
+			ginfo.Collect.EmptyDay(curdate.String())
 			curdate += 1
 		}
 
 		// fill day from data
-		scollect.ValueDay(curdate.String(), fdata)
+		ginfo.Collect.ValueDay(curdate.String(), fdata)
 
 		curdate += 1
 	}
@@ -248,13 +323,34 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 		return errors.New(fmt.Sprintf("Error reading data: %s", err))
 	}
 
-	// fill until today
-	for curdate.Before(epochdate.TodayUTC()) {
-		scollect.EmptyDay(curdate.String())
-		curdate += 1
+	if lastgroup != "" {
+		// fill until today
+		ginfo, _ := groupcollect[lastgroup]
+
+		for curdate.Before(epochdate.TodayUTC()) {
+			ginfo.Collect.EmptyDay(curdate.String())
+			curdate += 1
+		}
 	}
 
-	res := InfoResult{List: scollect.Result}
+	var resinfo *InfoResult
+	var resgroup *InfoResultGroup
+	var res interface{}
+	if len(group) > 0 {
+		resgroup = &InfoResultGroup{Group: make([]*InfoResultGroupItem, 0)}
+		for _, gv := range groupcollect {
+			resgroup.Group = append(resgroup.Group, &InfoResultGroupItem{GroupId: gv.GroupId, Groups: gv.Groups, InfoResult: &InfoResult{List: gv.Collect.Result}})
+		}
+		res = resgroup
+	} else {
+		resinfo = &InfoResult{List: nil}
+		if ri, ok := groupcollect[""]; ok {
+			resinfo.List = ri.Collect.Result
+		} else {
+			resinfo.List = nil
+		}
+		res = resinfo
+	}
 
 	if output != "chart" {
 		// output json data
@@ -277,10 +373,20 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 		//p.X.Tick.Marker = plot.ConstantTicks(res.Ticks())
 
 		for didx, ditem := range data {
-			res.SetPlotItem(ditem)
-			err = InfoAddLinePoints(p, didx, res)
-			if err != nil {
-				return err
+			if resinfo != nil {
+				resinfo.SetPlotItem(ditem)
+				err = InfoAddLinePoints(p, didx, ditem, resinfo)
+				if err != nil {
+					return err
+				}
+			} else if resgroup != nil {
+				for rgidx, rg := range resgroup.Group {
+					rg.SetPlotItem(ditem)
+					err = InfoAddLinePoints(p, didx*len(resgroup.Group)+rgidx, ditem+" - "+rg.GroupId, rg)
+					if err != nil {
+						return err
+					}
+				}
 			}
 		}
 
