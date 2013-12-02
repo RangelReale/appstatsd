@@ -128,10 +128,10 @@ func handleLog(w http.ResponseWriter, r *http.Request) error {
 		Sparse:     true,
 	})
 
-	fdata := make([]*LogData, 0, 100)
+	fdata := make([]LogData, 0)
 
-	query := c_log.Find(nil).Sort("-dt").Limit(amount).Iter()
-	flog := &LogData{}
+	query := c_log.Find(nil).Sort("-dt").Iter()
+	flog := LogData{}
 
 	for query.Next(&flog) {
 		fdata = append(fdata, flog)
@@ -451,16 +451,16 @@ func (s InfoResult) fieldValue(index int, fieldname string) float64 {
 // XY returns an x, y pair.
 func (s InfoResult) XY(index int) (x, y float64) {
 	v := s.fieldValue(index, s.plotItem)
-	/*
-		if s.plotItem == "duration" {
-			sv := s.fieldValue(index, "count")
-			if sv > 0 {
-				v = v / sv
-			} else {
-				v = 0
-			}
+
+	// output average for timing values
+	if strings.HasPrefix(s.plotItem, "t_") {
+		sv := s.fieldValue(index, "tc_"+strings.TrimPrefix(s.plotItem, "t_"))
+		if sv > 0 {
+			v = v / sv
+		} else {
+			v = 0
 		}
-	*/
+	}
 	return float64(index), v
 }
 
