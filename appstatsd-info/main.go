@@ -5,7 +5,7 @@ import (
 	"github.com/op/go-logging"
 )
 
-var log = logging.MustGetLogger("appstatsd")
+var log = logging.MustGetLogger("appstatsd-info")
 
 var configfile = flag.String("configfile", "", "configuration file path")
 
@@ -22,10 +22,7 @@ func main() {
 		}
 	}
 
-	go ServerDatabase()
-
-	go ServerLog()
-	go ServerStatsd()
+	go ServerInfo()
 
 	select {}
 }
