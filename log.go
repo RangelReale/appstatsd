@@ -3,31 +3,13 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/RangelReale/appstatsd/data"
 	"github.com/RangelReale/gostatsd/statsd"
 	"io"
 	"net"
 	"strconv"
 	"time"
 )
-
-type LogLevel int
-
-const (
-	CRITICAL LogLevel = 1
-	ERROR             = 2
-	WARNING           = 3
-	NOTICE            = 4
-	INFO              = 5
-	DEBUG             = 6
-)
-
-type LogData struct {
-	Date      time.Time `json:"date" bson:"dt"`
-	Level     LogLevel  `json:"level" bson:"lv"`
-	App       string    `json:"app" bson:"app,omitempty"`
-	MessageId string    `json:"mid,omitempty" bson:"mid,omitempty"`
-	Message   string    `json:"msg" bson:"m"`
-}
 
 // Receive log messages via udp
 func ServerLog() {
@@ -70,27 +52,27 @@ func serverLogHandleMessage(addr net.Addr, msg []byte) {
 
 		// Only process lines with more than one character
 		if len(line) > 1 {
-			data, err := serverLogParseLine(line)
+			ldata, err := serverLogParseLine(line)
 			if err != nil {
 				log.Error("error parsing line %q from %s: %s", line, addr, err)
 				continue
 			}
 
 			// send message to database
-			DatabaseChan <- DBMessage{log: data}
+			DatabaseChan <- DBMessage{log: ldata}
 
 			if Configuration.ErrorStatistics {
 				// log errors in "error"
-				if data.Level < WARNING {
+				if ldata.Level < data.WARNING {
 					DatabaseChan <- DBMessage{metrics: &statsd.Metric{
 						Type:   statsd.COUNTER,
-						Bucket: fmt.Sprintf("%s.error.ct", data.App),
+						Bucket: fmt.Sprintf("%s.error.ct", ldata.App),
 						Value:  1,
 					}}
-				} else if data.Level == WARNING {
+				} else if ldata.Level == data.WARNING {
 					DatabaseChan <- DBMessage{metrics: &statsd.Metric{
 						Type:   statsd.COUNTER,
-						Bucket: fmt.Sprintf("%s.error.wct", data.App),
+						Bucket: fmt.Sprintf("%s.error.wct", ldata.App),
 						Value:  1,
 					}}
 				}
@@ -105,8 +87,8 @@ func serverLogHandleMessage(addr net.Addr, msg []byte) {
 }
 
 // APP:LEVEL:MESSAGEID:MESSAGE
-func serverLogParseLine(line []byte) (*LogData, error) {
-	data := &LogData{Date: time.Now()}
+func serverLogParseLine(line []byte) (*data.LogData, error) {
+	ldata := &data.LogData{Date: time.Now()}
 
 	buf := bytes.NewBuffer(line)
 
@@ -114,7 +96,7 @@ func serverLogParseLine(line []byte) (*LogData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error parsing log: %s", err)
 	}
-	data.App = string(app[:len(app)-1])
+	ldata.App = string(app[:len(app)-1])
 
 	level, err := buf.ReadBytes(':')
 	if err != nil {
@@ -124,19 +106,19 @@ func serverLogParseLine(line []byte) (*LogData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error parsing log: %s", err)
 	}
-	data.Level = LogLevel(levelint)
+	ldata.Level = data.LogLevel(levelint)
 
 	messageid, err := buf.ReadBytes(':')
 	if err != nil {
 		return nil, fmt.Errorf("error parsing log: %s", err)
 	}
-	data.MessageId = string(messageid[:len(messageid)-1])
+	ldata.MessageId = string(messageid[:len(messageid)-1])
 
 	message := buf.Bytes()
 	if err != nil && err != io.EOF {
 		return nil, fmt.Errorf("error parsing log: %s", err)
 	}
-	data.Message = string(message[:len(message)])
+	ldata.Message = string(message[:len(message)])
 
-	return data, nil
+	return ldata, nil
 }

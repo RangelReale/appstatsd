@@ -40,6 +40,6 @@ func NewConfig() *Config {
 }
 
 func (c *Config) Load(configfile string) error {
-	_, err := toml.DecodeFile(configfile, Configuration)
+	_, err := toml.DecodeFile(configfile, c)
 	return err
 }

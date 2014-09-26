@@ -9,13 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/RangelReale/epochdate"
+	"github.com/RangelReale/appstatsd/info"
 	"github.com/gorilla/mux"
-	"labix.org/v2/mgo"
-	"labix.org/v2/mgo/bson"
 	"net/http"
 	"strconv"
-	"strings"
 )
 
 // Response header
@@ -25,17 +22,6 @@ type InfoResponse struct {
 
 	// Must always be a struct or map, CANNOT be array
 	Data interface{} `json:"data"`
-}
-
-type InfoResultGroup struct {
-	Group []*InfoResultGroupItem `json:"group"`
-}
-
-type InfoResultGroupItem struct {
-	*InfoResult
-	GroupId string                 `json:"-"`
-	Groups  map[string]interface{} `json:"groups"`
-	//Item   *InfoResult            `json:"item"`
 }
 
 type InfoResult struct {
@@ -50,12 +36,6 @@ type InfoResultRaw struct {
 
 	// internal variable for chart generation
 	plotItem string `json:"-"`
-}
-
-type InfoGroupInfo struct {
-	GroupId string
-	Groups  map[string]interface{}
-	Collect *SDayCollect
 }
 
 func ServerInfo() {
@@ -116,34 +96,15 @@ func handleLog(w http.ResponseWriter, r *http.Request) error {
 			amount = int(pamount)
 		}
 	}
-	if amount < 0 {
-		amount = 100
-	}
 
-	// log
-	c_log := db.C("log")
-	c_log.EnsureIndex(mgo.Index{
-		Key:        []string{"-dt"},
-		Background: true,
-		Sparse:     true,
-	})
-
-	fdata := make([]LogData, 0)
-
-	query := c_log.Find(nil).Sort("-dt").Limit(amount).Iter()
-	flog := LogData{}
-
-	for query.Next(&flog) {
-		fdata = append(fdata, flog)
-	}
-
-	if err := query.Close(); err != nil {
+	// do query
+	fdata, err := info.QueryLog(db, &info.LogQuery{Amount: amount, App: ""})
+	if err != nil {
 		return errors.New(fmt.Sprintf("Error reading data: %s", err))
 	}
 
-	res := InfoResultRaw{List: fdata}
-
 	// output json data
+	res := InfoResultRaw{List: fdata}
 	stenc, err := json.Marshal(InfoResponse{ErrorCode: 0, Data: res})
 	if err != nil {
 		return errors.New(fmt.Sprintf("Error encoding json data: %s", err))
@@ -169,24 +130,6 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 	vars := mux.Vars(r)
 	process := vars["process"]
 
-	// parameters - default is first from comment
-	period := r.Form.Get("period") // day, hour, minute
-	output := r.Form.Get("output") // json, chart
-	//fillempty := r.Form.Get("fillempty") // 1, 0
-
-	app := r.Form.Get("app")
-	pgroup := r.Form.Get("group")
-	group := []string{}
-	if pgroup != "" {
-		group = strings.Split(pgroup, ",")
-	}
-	pdata := r.Form.Get("data")
-	if pdata == "" {
-		return errors.New("Data parameter is required")
-	}
-	data := strings.Split(pdata, ",")
-
-	// amount of days
 	amount := 2
 	if r.Form.Get("amount") != "" {
 		pamount, err := strconv.ParseInt(r.Form.Get("amount"), 10, 16)
@@ -195,166 +138,26 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	cname := fmt.Sprintf("_a_%s", process)
-	if app != "" {
-		cname += "_app"
+	q := &info.StatsQuery{
+		Process: process,
+		Data:    info.SplitParams(r.Form.Get("data")),
+		Period:  r.Form.Get("period"),
+		Filters: make(map[string]string),
+		Groups:  info.SplitParams(r.Form.Get("group")),
+		Amount:  amount,
+		App:     r.Form.Get("app"),
 	}
 
-	if !infoCollectionExists(db, cname) {
-		return errors.New("Process not found")
-	}
+	output := r.Form.Get("output") // json, chart
 
-	c := db.C(cname)
-	if app != "" {
-		c.EnsureIndex(mgo.Index{
-			Key:        []string{"_dt", "_app"},
-			Background: true,
-			Sparse:     true,
-		})
-	} else {
-		c.EnsureIndex(mgo.Index{
-			Key:        []string{"_dt"},
-			Background: true,
-			Sparse:     true,
-		})
-	}
-
-	// start time
-	curdate := epochdate.TodayUTC() - epochdate.Date(amount) + 1
-	startdate := curdate
-
-	// build mongodb filter
-	filter := bson.M{"_dt": bson.M{"$gte": startdate.String()}}
-	if app != "" {
-		filter["_app"] = app
-	}
-
-	for pn, _ := range r.Form {
-		// each parameter prefixed with f_ becomes a query parameter
-		if strings.HasPrefix(pn, "f_") {
-			pname := strings.TrimPrefix(pn, "f_")
-			if strings.HasPrefix(pname, "_") {
-				return errors.New(fmt.Sprintf("Invalid filter param - cannot start with underline: %s", pname))
-			}
-
-			filter[pname] = r.Form.Get(pn)
-		}
-	}
-
-	querysort := []string{"_dt"}
-	if len(group) > 0 {
-		for _, g := range group {
-			querysort = append(querysort, g)
-		}
-	}
-
-	query := c.Find(filter).Sort(querysort...).Iter()
-
-	groupcollect := make(map[string]*InfoGroupInfo, 0)
-	lastgroup := ""
-
-	fdata := make(map[string]interface{})
-	for query.Next(&fdata) {
-		// build group string
-		curgroup := ""
-		if len(group) > 0 {
-			for _, g := range group {
-				if gv, ok := fdata[g]; ok {
-					curgroup = curgroup + "::" + fmt.Sprintf("%v", gv)
-				} else {
-					return errors.New(fmt.Sprintf("No such field %s", g))
-				}
-			}
-		}
-
-		// reset dates if changed group
-		if curgroup != lastgroup {
-			if lastgroup != "" {
-				ginfo, _ := groupcollect[lastgroup]
-
-				// fill until today
-				for curdate.Before(epochdate.TodayUTC()) {
-					ginfo.Collect.EmptyDay(curdate.String())
-					curdate += 1
-				}
-			}
-
-			// start time
-			curdate = epochdate.TodayUTC() - epochdate.Date(amount) + 1
-			startdate = curdate
-
-			lastgroup = curgroup
-		}
-
-		ginfo, sdok := groupcollect[curgroup]
-		if !sdok {
-			// stats collector, fills empty periods with 0
-			scollect := NewSDayCollect(period)
-			for _, ditem := range data {
-				// add data - output name is equals data name
-				scollect.AddImport(ditem, ditem)
-			}
-			ginfo = &InfoGroupInfo{GroupId: curgroup, Groups: make(map[string]interface{}), Collect: scollect}
-			groupcollect[curgroup] = ginfo
-
-			for _, g := range group {
-				if gv, ok := fdata[g]; ok {
-					ginfo.Groups[g] = gv
-				} else {
-					return errors.New(fmt.Sprintf("No such field %s", g))
-				}
-			}
-		}
-
-		datadate, _ := epochdate.Parse(epochdate.RFC3339, fdata["_dt"].(string))
-		for curdate.Before(datadate) {
-			// fill empty days
-			ginfo.Collect.EmptyDay(curdate.String())
-			curdate += 1
-		}
-
-		// fill day from data
-		ginfo.Collect.ValueDay(curdate.String(), fdata)
-
-		curdate += 1
-	}
-
-	if err := query.Close(); err != nil {
-		return errors.New(fmt.Sprintf("Error reading data: %s", err))
-	}
-
-	if lastgroup != "" {
-		// fill until today
-		ginfo, _ := groupcollect[lastgroup]
-
-		for curdate.Before(epochdate.TodayUTC()) {
-			ginfo.Collect.EmptyDay(curdate.String())
-			curdate += 1
-		}
-	}
-
-	var resinfo *InfoResult
-	var resgroup *InfoResultGroup
-	var res interface{}
-	if len(group) > 0 {
-		resgroup = &InfoResultGroup{Group: make([]*InfoResultGroupItem, 0)}
-		for _, gv := range groupcollect {
-			resgroup.Group = append(resgroup.Group, &InfoResultGroupItem{GroupId: gv.GroupId, Groups: gv.Groups, InfoResult: &InfoResult{List: gv.Collect.Result}})
-		}
-		res = resgroup
-	} else {
-		resinfo = &InfoResult{List: nil}
-		if ri, ok := groupcollect[""]; ok {
-			resinfo.List = ri.Collect.Result
-		} else {
-			resinfo.List = nil
-		}
-		res = resinfo
+	res, err := info.QueryStats(db, q)
+	if err != nil {
+		return err
 	}
 
 	if output != "chart" {
 		// output json data
-		stenc, err := json.Marshal(InfoResponse{ErrorCode: 0, Data: res})
+		stenc, err := json.Marshal(InfoResponse{ErrorCode: 0, Data: res.Result})
 		if err != nil {
 			return errors.New(fmt.Sprintf("Error encoding json data: %s", err))
 		}
@@ -368,18 +171,18 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 
-		p.Title.Text = fmt.Sprintf("Chart %s - %s", pdata, period)
-		p.X.Label.Text = fmt.Sprintf("Day (%s to %s)", startdate.String(), curdate.String())
+		p.Title.Text = fmt.Sprintf("Chart %s - %s", r.Form.Get("data"), q.Period)
+		p.X.Label.Text = fmt.Sprintf("Day (%s to %s)", res.StartDate.String(), res.EndDate.String())
 		//p.X.Tick.Marker = plot.ConstantTicks(res.Ticks())
 
-		for didx, ditem := range data {
-			if resinfo != nil {
+		for didx, ditem := range q.Data {
+			if resinfo, ok := res.Result.(*info.InfoResult); ok {
 				resinfo.SetPlotItem(ditem)
 				err = InfoAddLinePoints(p, didx, ditem, resinfo)
 				if err != nil {
 					return err
 				}
-			} else if resgroup != nil {
+			} else if resgroup, ok := res.Result.(*info.InfoResultGroup); ok {
 				for rgidx, rg := range resgroup.Group {
 					rg.SetPlotItem(ditem)
 					err = InfoAddLinePoints(p, didx*len(resgroup.Group)+rgidx, ditem+" - "+rg.GroupId, rg)
@@ -400,77 +203,6 @@ func handleStats(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	return nil
-}
-
-// Checks if a collection exists on the MongoDB database
-func infoCollectionExists(db *mgo.Database, name string) bool {
-	list, err := db.CollectionNames()
-	if err != nil {
-		log.Error("Error listing info collections: %s", err)
-		return false
-	}
-
-	for _, l := range list {
-		//if strings.HasPrefix(l, fmt.Sprintf("_a_%s", name)) {
-		if l == name {
-			return true
-		}
-	}
-	return false
-}
-
-// Sets item to be used on plotter.XYer interface
-func (s *InfoResult) SetPlotItem(item string) {
-	s.plotItem = item
-}
-
-// implement plotter.XYer
-func (s InfoResult) Len() int {
-	return len(s.List)
-}
-
-// must convert values to float64
-func (s InfoResult) fieldValue(index int, fieldname string) float64 {
-	r := s.List[index][fieldname]
-
-	switch v := r.(type) {
-	case int:
-		return float64(v)
-	case int32:
-		return float64(v)
-	case int64:
-		return float64(v)
-	case float32:
-		return float64(v)
-	case float64:
-		return v
-	}
-	return -1
-}
-
-// XY returns an x, y pair.
-func (s InfoResult) XY(index int) (x, y float64) {
-	v := s.fieldValue(index, s.plotItem)
-
-	// output average for timing values
-	if strings.HasPrefix(s.plotItem, "t_") {
-		sv := s.fieldValue(index, "tc_"+strings.TrimPrefix(s.plotItem, "t_"))
-		if sv > 0 {
-			v = v / sv
-		} else {
-			v = 0
-		}
-	}
-	return float64(index), v
-}
-
-// Return X axis tick marks
-func (s InfoResult) Ticks() []plot.Tick {
-	ret := make([]plot.Tick, len(s.List))
-	for x, i := range s.List {
-		ret = append(ret, plot.Tick{Value: float64(x), Label: i["date"].(string)})
-	}
-	return ret
 }
 
 // Add colored line to chart

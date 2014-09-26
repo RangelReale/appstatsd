@@ -20,11 +20,11 @@ The bucket name format is:
 
 where:
 
-* appname: name of the sending application. If blank, statistics are not generated per app
+* appname: name of the sending application. If blank, (that is, bucket starts with ".") statistics are not generated per app
 * info1...infoN: information name. Each information level and is logged in a different collection, for example app.conn.proj.proc will generate these collections: conn, conn_proj and conn_proj_proc. Any statistics generated for this bucket will be saved to the 3 collections.
 * #param1...#paramN: each information can have any number of parameters, that will be used as the key to aggregate statistics. For example, the buckets app.proc#sendmail and app.proc#sendsms will be aggretated on the same collection, but will have separated statistics, with a key named "proc" in addition to the default keys.
 
-The real saved named is prefixed with the bucket type, c_ for COUNTER, t_ for TIMER, g_ for GAUGE. this must be taken in account when retrieving data.
+The real saved name is prefixed with the bucket type, c_ for COUNTER, t_ for TIMER, g_ for GAUGE. this must be taken in account when retrieving data.
 
 For the TIMER and GAUGE parameter, an additional counter value is saved for each value, with the tc_ and gc_ prefix respectively.
 

@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/RangelReale/appstatsd/data"
 	"github.com/RangelReale/gostatsd/statsd"
-	"labix.org/v2/mgo"
-	"labix.org/v2/mgo/bson"
+	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 	"strings"
 	"time"
 )
@@ -19,7 +20,7 @@ var (
 // message to send on DatabaseChan to notify of new data
 type DBMessage struct {
 	metrics *statsd.Metric
-	log     *LogData
+	log     *data.LogData
 }
 
 func init() {
@@ -65,6 +66,17 @@ func dbHandleMetrics(m *statsd.Metric) {
 
 	// last item - field name
 	name := values[len(values)-1]
+
+	// sanitization
+	if !data.ValidateName(app) {
+		log.Error("Invalid bucket name - name not validated: %s", app)
+		return
+	}
+
+	if !data.ValidateName(name) {
+		log.Error("Invalid bucket name - name not validated: %s", name)
+		return
+	}
 
 	// remove first and last item
 	values = values[1 : len(values)-1]
@@ -118,13 +130,19 @@ func dbHandleMetrics(m *statsd.Metric) {
 		}
 
 		// all collections start with _a
-		c_base := "_a"
+		c_base := "stat"
 
 		// loop on info. Each can have parameters separated by #
 		for _, iv := range values {
 			info := strings.Split(iv, "#")
 			if strings.HasPrefix(info[0], "_") {
 				log.Error("Invalid bucket name - info cannot start with underline: %s", info[0])
+				return
+			}
+
+			// sanitize
+			if !data.ValidateName(info[0]) {
+				log.Error("Invalid bucket name - name not validated: %s", info[0])
 				return
 			}
 
@@ -149,8 +167,9 @@ func dbHandleMetrics(m *statsd.Metric) {
 						pname = info[0]
 					}
 
-					if strings.HasPrefix(pname, "_") {
-						log.Error("Invalid bucket name - parameter cannot start with underline: %s", pname)
+					// sanitize
+					if !data.ValidateName(pname) {
+						log.Error("Invalid param name - name not validated: %s", pname)
 						return
 					}
 
