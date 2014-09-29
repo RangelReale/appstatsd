@@ -52,7 +52,7 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 	// find collection
 	cname := fmt.Sprintf("stat_%s", statsquery.Process)
 	if statsquery.App != "" {
-		cname += "_app"
+		cname += "-app"
 	}
 
 	if !infoCollectionExists(db, cname) {

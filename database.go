@@ -129,7 +129,7 @@ func dbHandleMetrics(m *statsd.Metric) {
 			"_app": app,
 		}
 
-		// all collections start with _a
+		// all collections start with stat_
 		c_base := "stat"
 
 		// loop on info. Each can have parameters separated by #
@@ -154,7 +154,7 @@ func dbHandleMetrics(m *statsd.Metric) {
 
 			// separate database for total and per-app
 			c := dbdb.C(c_base)
-			capp := dbdb.C(fmt.Sprintf("%s_app", c_base))
+			capp := dbdb.C(fmt.Sprintf("%s-app", c_base))
 
 			// loop parameters
 			for ridx, rv := range info[1:] {
