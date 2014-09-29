@@ -73,7 +73,7 @@ func dbHandleMetrics(m *statsd.Metric) {
 		return
 	}
 
-	if !data.ValidateName(name) {
+	if !data.ValidateValueName(name) {
 		log.Error("Invalid bucket name - name not validated: %s", name)
 		return
 	}
