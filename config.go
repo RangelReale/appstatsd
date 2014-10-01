@@ -27,6 +27,7 @@ func NewConfig() *Config {
 	c := Config{
 		StatsdPort:      8125,
 		LogPort:         8126,
+		ListenHost:      "localhost",
 		ErrorStatistics: true,
 		MGOHost:         "localhost",
 		MGOPort:         "27017",
