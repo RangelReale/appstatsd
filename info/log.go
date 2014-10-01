@@ -31,6 +31,7 @@ func QueryLog(db *mgo.Database, logquery *LogQuery) ([]*data.LogData, error) {
 
 	for query.Next(&flog) {
 		fdata = append(fdata, flog)
+		flog = nil
 	}
 
 	if err := query.Close(); err != nil {
