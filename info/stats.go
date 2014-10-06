@@ -38,7 +38,7 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 	}
 
 	// sanitize
-	if !data.ValidateName(statsquery.Process) {
+	if !data.ValidateValueName(statsquery.Process) {
 		return nil, fmt.Errorf("Invalid process name - name not validated: %s", statsquery.Process)
 	}
 	if statsquery.App != "" && !data.ValidateName(statsquery.App) {
@@ -87,7 +87,7 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 	if statsquery.Filters != nil {
 		for pn, pv := range statsquery.Filters {
 			// sanitize
-			if !data.ValidateName(pn) {
+			if !data.ValidateValueName(pn) {
 				return nil, fmt.Errorf("Invalid filter name - name not validated: %s", pn)
 			}
 			filter[pn] = pv
