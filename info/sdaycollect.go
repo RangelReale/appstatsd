@@ -73,15 +73,46 @@ func (s *SDayCollect) addImportData(dest map[string]interface{}, values map[stri
 		destv := float64(0)
 		if values != nil {
 			if v, ok := values[iiv]; ok {
-				destv = v.(float64)
+				destv = s.toFloat(v)
 			}
 		}
 		if dval, dok := dest[iin]; dok {
-			dnval := dval.(float64) + destv
+			dnval := s.toFloat(dval) + destv
 			dest[iin] = dnval
 		} else {
 			dest[iin] = destv
 		}
+	}
+}
+
+func (s *SDayCollect) toFloat(v interface{}) float64 {
+	switch i := v.(type) {
+	case float64:
+		return i
+	case float32:
+		return float64(i)
+	case int:
+		return float64(i)
+	case int8:
+		return float64(i)
+	case int16:
+		return float64(i)
+	case int32:
+		return float64(i)
+	case int64:
+		return float64(i)
+	case uint:
+		return float64(i)
+	case uint8:
+		return float64(i)
+	case uint16:
+		return float64(i)
+	case uint32:
+		return float64(i)
+	case uint64:
+		return float64(i)
+	default:
+		panic(fmt.Sprintf("could not convert %v to float", v))
 	}
 }
 
