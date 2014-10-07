@@ -7,6 +7,7 @@ import (
 	"github.com/RangelReale/epochdate"
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
+	//"log"
 	"strings"
 )
 
@@ -75,8 +76,10 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 	}
 
 	// start time
-	curdate := epochdate.TodayUTC() - epochdate.Date(statsquery.Amount) + 1
-	startdate := curdate
+	startdate := epochdate.TodayUTC() - epochdate.Date(statsquery.Amount) + 1
+	enddate := epochdate.TodayUTC()
+
+	//log.Printf("StartDate: %s - EndDate: %s", startdate.String(), enddate.String())
 
 	// build mongodb filter
 	filter := bson.M{"_dt": bson.M{"$gte": startdate.String()}}
@@ -90,6 +93,7 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 			if !data.ValidateValueName(pn) {
 				return nil, fmt.Errorf("Invalid filter name - name not validated: %s", pn)
 			}
+			//log.Printf("Filter: %s = %s", pn, pv)
 			filter[pn] = pv
 		}
 	}
@@ -104,10 +108,12 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 	query := c.Find(filter).Sort(querysort...).Iter()
 
 	groupcollect := make(map[string]*InfoGroupInfo, 0)
-	lastgroup := ""
 
 	fdata := make(map[string]interface{})
 	for query.Next(&fdata) {
+		datadate, _ := epochdate.Parse(epochdate.RFC3339, fdata["_dt"].(string))
+		//log.Printf("DateDate: %s", datadate.String())
+
 		// build group string
 		curgroup := ""
 		if len(statsquery.Groups) > 0 {
@@ -120,33 +126,17 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 			}
 		}
 
-		// reset dates if changed group
-		if curgroup != lastgroup {
-			if lastgroup != "" {
-				ginfo, _ := groupcollect[lastgroup]
-
-				// fill until today
-				for curdate.Before(epochdate.TodayUTC()) {
-					ginfo.Collect.EmptyDay(curdate.String())
-					curdate += 1
-				}
-			}
-
-			// start time
-			curdate = epochdate.TodayUTC() - epochdate.Date(statsquery.Amount) + 1
-			startdate = curdate
-
-			lastgroup = curgroup
-		}
-
 		ginfo, sdok := groupcollect[curgroup]
 		if !sdok {
+			//log.Printf("New data for group %s", curgroup)
+
 			// stats collector, fills empty periods with 0
 			scollect := NewSDayCollect(statsquery.Period)
 			for _, ditem := range statsquery.Data {
 				// add data - output name is equals data name
 				scollect.AddImport(ditem, ditem)
 			}
+			scollect.Init(startdate, enddate)
 			ginfo = &InfoGroupInfo{GroupId: curgroup, Groups: make(map[string]interface{}), Collect: scollect}
 			groupcollect[curgroup] = ginfo
 
@@ -159,44 +149,25 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 			}
 		}
 
-		datadate, _ := epochdate.Parse(epochdate.RFC3339, fdata["_dt"].(string))
-		for curdate.Before(datadate) {
-			// fill empty days
-			ginfo.Collect.EmptyDay(curdate.String())
-			curdate += 1
-		}
-
 		// fill day from data
-		ginfo.Collect.ValueDay(curdate.String(), fdata)
-
-		curdate += 1
+		ginfo.Collect.ValueDay(datadate, fdata)
 	}
 
 	if err := query.Close(); err != nil {
 		return nil, fmt.Errorf("Error reading data: %s", err)
 	}
 
-	if lastgroup != "" {
-		// fill until today
-		ginfo, _ := groupcollect[lastgroup]
-
-		for curdate.Before(epochdate.TodayUTC()) {
-			ginfo.Collect.EmptyDay(curdate.String())
-			curdate += 1
-		}
-	}
-
 	var res interface{}
 	if len(statsquery.Groups) > 0 {
 		resgroup := &InfoResultGroup{Group: make([]*InfoResultGroupItem, 0)}
 		for _, gv := range groupcollect {
-			resgroup.Group = append(resgroup.Group, &InfoResultGroupItem{GroupId: gv.GroupId, Groups: gv.Groups, InfoResult: &InfoResult{List: gv.Collect.Result}})
+			resgroup.Group = append(resgroup.Group, &InfoResultGroupItem{GroupId: gv.GroupId, Groups: gv.Groups, InfoResult: &InfoResult{List: gv.Collect.BuildResult()}})
 		}
 		res = resgroup
 	} else {
 		resinfo := &InfoResult{List: nil}
 		if ri, ok := groupcollect[""]; ok {
-			resinfo.List = ri.Collect.Result
+			resinfo.List = ri.Collect.BuildResult()
 		} else {
 			resinfo.List = nil
 		}
@@ -205,8 +176,9 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 
 	return &StatsQueryResult{
 		StartDate: startdate,
-		EndDate:   curdate,
-		Result:    res,
+		//EndDate:   curdate,
+		EndDate: enddate,
+		Result:  res,
 	}, nil
 }
 

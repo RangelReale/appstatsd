@@ -12,6 +12,7 @@ import (
 	"gopkg.in/mgo.v2"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func HandleStats(process string, db *mgo.Database, w http.ResponseWriter, r *http.Request) error {
@@ -36,6 +37,13 @@ func HandleStats(process string, db *mgo.Database, w http.ResponseWriter, r *htt
 	}
 
 	output := r.Form.Get("output") // json, chart
+
+	// filters
+	for fname, _ := range r.Form {
+		if strings.HasPrefix(fname, "f_") {
+			q.Filters[strings.TrimPrefix(fname, "f_")] = r.Form.Get(fname)
+		}
+	}
 
 	res, err := info.QueryStats(db, q)
 	if err != nil {
