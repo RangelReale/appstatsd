@@ -42,8 +42,13 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 	if !data.ValidateValueName(statsquery.Process) {
 		return nil, fmt.Errorf("Invalid process name - name not validated: %s", statsquery.Process)
 	}
-	if statsquery.App != "" && !data.ValidateName(statsquery.App) {
+	if statsquery.App != "" && statsquery.App != "@" && !data.ValidateName(statsquery.App) {
 		return nil, fmt.Errorf("Invalid app name - name not validated: %s", statsquery.App)
+	}
+	for _, gval := range statsquery.Groups {
+		if gval != "_app" && !data.ValidateName(gval) {
+			return nil, fmt.Errorf("Invalid group name - name not validated: %s", gval)
+		}
 	}
 
 	if statsquery.Amount < 1 {
@@ -83,7 +88,7 @@ func QueryStats(db *mgo.Database, statsquery *StatsQuery) (*StatsQueryResult, er
 
 	// build mongodb filter
 	filter := bson.M{"_dt": bson.M{"$gte": startdate.String()}}
-	if statsquery.App != "" {
+	if statsquery.App != "" && statsquery.App != "@" {
 		filter["_app"] = statsquery.App
 	}
 
