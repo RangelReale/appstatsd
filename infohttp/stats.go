@@ -19,11 +19,32 @@ func HandleStats(process string, db *mgo.Database, w http.ResponseWriter, r *htt
 	r.ParseForm()
 
 	amount := 2
+	chartwidth := 800
+	chartheight := 600
+
 	if r.Form.Get("amount") != "" {
 		pamount, err := strconv.ParseInt(r.Form.Get("amount"), 10, 16)
 		if err == nil {
 			amount = int(pamount)
 		}
+	}
+	if r.Form.Get("chartwidth") != "" {
+		pchartwidth, err := strconv.ParseInt(r.Form.Get("chartwidth"), 10, 16)
+		if err == nil {
+			chartwidth = int(pchartwidth)
+		}
+	}
+	if r.Form.Get("chartheight") != "" {
+		pchartheight, err := strconv.ParseInt(r.Form.Get("chartheight"), 10, 16)
+		if err == nil {
+			chartheight = int(pchartheight)
+		}
+	}
+	if chartwidth < 40 {
+		chartwidth = 40
+	}
+	if chartheight < 40 {
+		chartheight = 40
 	}
 
 	q := &info.StatsQuery{
@@ -90,8 +111,8 @@ func HandleStats(process string, db *mgo.Database, w http.ResponseWriter, r *htt
 
 		w.Header().Add("Content-Type", "image/png")
 
-		width := vg.Length(800)
-		height := vg.Length(600)
+		width := vg.Length(chartwidth)
+		height := vg.Length(chartheight)
 		c := vgimg.PngCanvas{vgimg.New(width, height)}
 		p.Draw(plot.MakeDrawArea(c))
 		c.WriteTo(w)
