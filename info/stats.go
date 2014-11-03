@@ -260,6 +260,17 @@ func (s InfoResult) XY(index int) (x, y float64) {
 			v = 0
 		}
 	}
+
+	// output average for gauge values
+	if strings.HasPrefix(s.plotItem, "g_") {
+		sv := s.fieldValue(index, "gc_"+strings.TrimPrefix(s.plotItem, "g_"))
+		if sv > 0 {
+			v = v / sv
+		} else {
+			v = 0
+		}
+	}
+
 	return float64(index), v
 }
 

@@ -16,8 +16,6 @@ func dbConnect() error {
 		return nil
 	}
 
-	log.Debug("Connecting to database")
-
 	var mgourl string
 	if Configuration.MGOUsername != "" {
 		mgourl = fmt.Sprintf("mongodb://%s:%s@%s:%s/%s",
@@ -25,8 +23,12 @@ func dbConnect() error {
 			Configuration.MGOHost, Configuration.MGOPort,
 			Configuration.MGODBName)
 	} else {
-		mgourl = Configuration.MGOHost
+		mgourl = fmt.Sprintf("mongodb://%s:%s/%s",
+			Configuration.MGOHost, Configuration.MGOPort,
+			Configuration.MGODBName)
 	}
+
+	log.Debug("Connecting to database %s", mgourl)
 
 	var err error
 	dbsession, err = mgo.Dial(mgourl)

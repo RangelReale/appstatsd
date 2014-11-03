@@ -210,7 +210,9 @@ func dbConnect() error {
 			Configuration.MGOHost, Configuration.MGOPort,
 			Configuration.MGODBName)
 	} else {
-		mgourl = Configuration.MGOHost
+		mgourl = fmt.Sprintf("mongodb://%s:%s/%s",
+			Configuration.MGOHost, Configuration.MGOPort,
+			Configuration.MGODBName)
 	}
 
 	var err error
