@@ -1,18 +1,20 @@
 package infohttp
 
 import (
+	"encoding/json"
+	"fmt"
+	"html"
+	"net/http"
+	"strconv"
+	"strings"
+
 	"code.google.com/p/plotinum/plot"
 	"code.google.com/p/plotinum/plotter"
 	"code.google.com/p/plotinum/plotutil"
 	"code.google.com/p/plotinum/vg"
 	"code.google.com/p/plotinum/vg/vgimg"
-	"encoding/json"
-	"fmt"
 	"github.com/RangelReale/appstatsd/info"
 	"gopkg.in/mgo.v2"
-	"net/http"
-	"strconv"
-	"strings"
 )
 
 func HandleStats(process string, db *mgo.Database, w http.ResponseWriter, r *http.Request) error {
@@ -71,16 +73,7 @@ func HandleStats(process string, db *mgo.Database, w http.ResponseWriter, r *htt
 		return err
 	}
 
-	if output != "chart" {
-		// output json data
-		stenc, err := json.Marshal(InfoResponse{ErrorCode: 0, Data: res.Result})
-		if err != nil {
-			return fmt.Errorf("Error encoding json data: %s", err)
-		}
-
-		w.Header().Add("Content-Type", "application/json; charset=utf-8")
-		w.Write(stenc)
-	} else {
+	if output == "chart" {
 		// output chart
 		p, err := plot.New()
 		if err != nil {
@@ -116,6 +109,80 @@ func HandleStats(process string, db *mgo.Database, w http.ResponseWriter, r *htt
 		c := vgimg.PngCanvas{vgimg.New(width, height)}
 		p.Draw(plot.MakeDrawArea(c))
 		c.WriteTo(w)
+	} else if output == "table" || output == "atable" {
+		w.Header().Add("Content-Type", "text/html; charset=utf-8")
+
+		w.Write([]byte("<table border=\"1\">"))
+
+		for _, ditem := range q.Data {
+
+			w.Write([]byte("<tr>"))
+			w.Write([]byte(fmt.Sprintf("<td><b>%s</b></td>", html.EscapeString(ditem))))
+
+			if resinfo, ok := res.Result.(*info.InfoResult); ok {
+				resinfo.SetPlotItem(ditem)
+				for ridx, rdata := range resinfo.List {
+					var dvalue string
+					if output == "atable" {
+						_, dd := resinfo.XY(ridx)
+						if dd != 0 {
+							dvalue = fmt.Sprintf("%.1f", dd)
+						} else {
+							dvalue = "0"
+						}
+					} else {
+						dvalue = fmt.Sprintf("%v", rdata[ditem])
+					}
+					if dvalue == "0" {
+						dvalue = "-"
+					}
+
+					w.Write([]byte(fmt.Sprintf("<td align=\"center\">%s</td>", html.EscapeString(dvalue))))
+				}
+
+				w.Write([]byte("</tr>"))
+			} else if resgroup, ok := res.Result.(*info.InfoResultGroup); ok {
+				w.Write([]byte("</tr>"))
+
+				for _, rg := range resgroup.Group {
+					w.Write([]byte(fmt.Sprintf("<tr><td>%s</td>", rg.GroupId)))
+
+					rg.SetPlotItem(ditem)
+					for ridx, rdata := range rg.List {
+						var dvalue string
+						if output == "atable" {
+							_, dd := rg.XY(ridx)
+							if dd != 0 {
+								dvalue = fmt.Sprintf("%.1f", dd)
+							} else {
+								dvalue = "0"
+							}
+						} else {
+							dvalue = fmt.Sprintf("%v", rdata[ditem])
+						}
+						if dvalue == "0" {
+							dvalue = "-"
+						}
+
+						w.Write([]byte(fmt.Sprintf("<td align=\"center\">%s</td>", html.EscapeString(dvalue))))
+					}
+
+					w.Write([]byte("</tr>"))
+				}
+			}
+		}
+
+		w.Write([]byte("</table>"))
+	} else {
+		// output json data
+		stenc, err := json.Marshal(InfoResponse{ErrorCode: 0, Data: res.Result})
+		if err != nil {
+			return fmt.Errorf("Error encoding json data: %s", err)
+		}
+
+		w.Header().Add("Content-Type", "application/json; charset=utf-8")
+		w.Write(stenc)
+
 	}
 
 	return nil
